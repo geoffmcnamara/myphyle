@@ -40,9 +40,11 @@ import beaker
 from bcrypt import hashpw, gensalt
 from sqlalchemy import Column, Integer, String, create_engine, Table, MetaData, text, schema, inspect, select, and_, desc
 from sqlalchemy.orm import sessionmaker
+# from doctopt import docopt
 # next lines used for debugging
 sys.path.append("/home/geoffm/dev/python/gmodules/")
 from dbug import dbug  # noqa: E402
+import webbrowser
 
 
 # ######################## #
@@ -137,7 +139,7 @@ app_var['msg']=""
 # now recreate fcontrol table
 # ### EOF Sandbox1 #### #
 
-# ########### Tables #####################
+# ########### App Tables #####################
 # Structure our three essential app tables
 # these need app_meta = MetaData(app_engine)?
 USERS = Table(
@@ -182,7 +184,7 @@ FCONTROL = Table(
     extend_existing=True,
     )
 
-# ######## EOB Tables ########### #
+# ######## EOB App Tables ########### #
 
 
 # ####### Functions ############# #
@@ -392,18 +394,20 @@ def check_login(viewname, username, password):
     docstring
     WIP
     """
-    dbug("Begin check_login("+viewname+", "+username+", "+password+")")
+    dbug("Begin check_login(" + viewname + ", " + username + ", " + password + ")")
 
     session = bottle.request.environ.get('beaker.session')
-    dbug("session: " + str(session) + " we are starting check_login - we are nulling out session info")
+    # dbug("session: " + str(session) + " we are starting check_login - we are nulling out session info")
     dbug("session: " + str(session) + " we are starting check_login")
     # session['username'] = ""
     # session['viewname'] = ""
-    #if session.has_key('username')  and session.has_key('viewname'):
-    #    username = session['username']
-    #    viewname = session['viewname']
-    #    dbug("session already established with " + session['username'] + " for " + session['viewname'])
-    #    app_var['msg'] += "<br>You have an exisiting session with username: " + username + " and viewname: " + viewname
+    if session.has_key('username')  and session.has_key('viewname'):
+        username = session['username']
+        viewname = session['viewname']
+        dbug("session already established with " + session['username'] + " for " + session['viewname'])
+        app_var['msg'] += "<br>You have an exisiting session with username: " + username + " and viewname: " + viewname
+        # ### this suggests that a previous authentication was established so...
+        return True
     #else:
     #    # username = ""
     #    # viewname = ""
@@ -413,28 +417,34 @@ def check_login(viewname, username, password):
     #    # app_var['msg'] += "FAILURE error: with session username: " + username + " and session viewname: " + viewname
     #    # return False
     # continue user check against app_users table
+    # ###
+    # ### methodology ###
+    # ### if username and viewname already exist
+    # ###    then we have an active authenticated session - we should return True
+    # ### WIP need more here 
+    # ###
     users = app_meta.tables['app_users']
     views = app_meta.tables['app_views']
+    dbug("got this far with username=" + username + " and viewname=" + viewname)
+    sel = select([users]).where(and_(users.c.username==username, users.c.viewname==viewname))
     try:
-        sel = select([users]).where(and_(users.c.username==username, users.c.viewname==viewname))
         res = app_conn.execute(sel)
-        res_len = len(res)  # for debugging and trial
         cnt = row_count(res)
-        dbug("cnt: " + str(cnt) + " len(res): " + str(res_len))
-        for record in res:
-            dbug("record: " + str(record))
+        dbug("cnt: " + str(cnt))
+        # for row in res:
+        #     dbug("row: " + str(row))
         if cnt == 0:
             dbug("No matching rows found in users table for user: " + username + " viewname: " + viewname)  
             app_var['msg'] += "<br>No matching rows found in users table for user: " + username + " viewname: " + viewname
     except Exception, e:
-            # app_var['msg'] += "<br>FAILURE: error: " + str(e) + " No matching record found in users table for: " + username
-            # app_var['msg'] += " and viewname: " + viewname
-            dbug("FAILURE: error: " + str(e) + " No matching record found in users table for: " + username)
+            dbug("FAILURE: error: [" + str(e) + "] No matching record found in users table for: " + username + " viewname: " + viewname)
     res = app_conn.execute(sel)  # you have to reset the result each time you need it
     for row in res:
         dbug("row: " + str(row))
         if row['viewname'] == viewname and row['username'] == username:
+            # this double checks that the session username and session viewname exist in the users database
             app_var['msg'] += "<br>There is a user entry [" + username + "] for the viewname [" + viewname + "] in the users table"
+
         # dbug("just for grins hashed row['password']: " + hashpw(row['password'].encode('utf-8'), gensalt()))
         if not row['password'].encode('utf-8').startswith("$2b$"):
             dbug("Does NOT look like a hashed pw")
@@ -445,14 +455,16 @@ def check_login(viewname, username, password):
             action_stmt = USERS.update().values(vals_d).where(and_(USERS.c.viewname == viewname, USERS.c.username == username)) 
             result = app_conn.execute(action_stmt)  
             hashed_password = row['password'].encode('utf-8')
+            # sel was established just before the try: above
             res = app_conn.execute(sel)  # you have to reset the result each time you need it
         else:
             hashed_password = row['password'].encode('utf-8')
-        # dbug("hashed_password: " + hashed_password) # fails: + " oh and res_len=" + str(res_len))
+        # dbug("hashed_password: " + hashed_password)
         if row['password'] == password or hashpw(password, hashed_password) == hashed_password:  # this is TEMPORARY AND NEEDS TO BE REMOVED! WIP
             app_var['msg'] += "<br>The password matches"
         # if row['viewname'] == viewname or row['username'] == username and hashpw(password,gensalt()) == row['password']:
             # now make sure there is an entry in the app_views table for this viewname
+            # ### checking views table now (app_views) ###
             dbug("Checking for viewname [" + viewname + "] in the views table")
             try:
                 sel = select([views]).where(views.c.viewname==viewname)
@@ -465,6 +477,10 @@ def check_login(viewname, username, password):
                 else:
                     app_var['msg'] += "<p>There is a viewname [" + viewname + "] record in the views table</p>"
                     app_var['msg'] += "<p>Successful login authentication</p>"
+                dbug("PASSED check_login() " )
+                # ############################
+                # ### PASSED check_login() ###
+                # ############################
                 return True
             except Exception, e:
                 dbug("oops maybe no records matched views.viewname " + str(e))
@@ -472,7 +488,8 @@ def check_login(viewname, username, password):
                 return False
         else:
             app_var['msg'] += "<br>Password failed..."
-            # else here is strickly for debugging
+            # this is strickly for debugging
+            dbug("Password FAILED")
             dbug("hmmm: row[viewname]=" + row['viewname'] + " viewname=" + viewname)
             dbug("hmmm: row[username]=" + row['username'] + " username=" + username)
             dbug("hmmm: row[password]=" + row['password'] + " password=" + password)
@@ -559,10 +576,35 @@ for table in app_meta.tables:
 # print("row_d: " + str(row_d(cols_l, result)))
 # #### EOB Sandbox2 #### #
 
+
+def local_content(content):
+    """
+    experimental
+    """
+    local.content = content.replace("<br>","\n")
+    print("="*80)
+    print(local_content)
+    print("="*80)
+
+
 # ############################## #
 # ########### routes ########### #
 # ############################## #
 # ##########
+
+@route('/sess')
+def sess():
+    s = bottle.request.environ.get('beaker.session')
+    s['test'] = 'this string came from the session'
+    s.save()
+    bottle.redirect('/sess/out')
+
+@route("/sess/out")
+def sess_out():
+    s = bottle.request.environ.get('beaker.session')
+    return s['test']
+
+
 @route('/')
 def home():
     # #####
@@ -588,6 +630,10 @@ def login():
     # global app_vars
     # print("entering get(/login)...")
     """
+    # global LOCAL_ONLY
+    #if LOCAL_ONLY:
+    #    global session
+    #else:
     session = bottle.request.environ.get('beaker.session')
     dbug("session: " + str(session))
     if session.has_key('viewname'):
@@ -603,12 +649,20 @@ def login():
         username = ''
     dbug("Near begining of /login with: viewname: " + viewname + " username: " + username)
     app_var['msg'] = ""  # clear/reset msg
+    # ### grab all the viewnames ### #
     sel = VIEWS.select()
     result = app_conn.execute(sel)
     viewnames = []
     for row in result:
         viewnames.append(row['viewname'])
+    # ### grab all the usernames ### #
+    sel = USERS.select()
+    result = app_conn.execute(sel)
+    usernames = []
+    for row in result:
+        usernames.append(row['username'])
 
+    # ### start building the login screen ### #
     content = "<center>"
     content += '''
         <!-- 
@@ -625,11 +679,13 @@ def login():
           Please select your viewname:
           <br>
           '''
+    # select viewname from oviewnames #
     content += '<select name="viewname" style="width: 200px;">\n'
     for view in viewnames:
         content += '<option value="' + view + '">' + view + '</option>\n'
     content += '</select>\n'
     # content += '<input type="text" name="viewname" value=' + viewname + '>\n'
+    # start username and password input screen #
     content += '''
           <br>
           </div>
@@ -638,7 +694,12 @@ def login():
           Please fill-in your credentials:
           <br>\n
           '''
-    content += '<input type="text" name="username" value=' + username + '>'
+    # select username from usernames #
+    content += '<select name="username" style="width: 200px;">\n'
+    for user in usernames:
+        content += '<option value="' + user + '">' + user + '</option>\n'
+    content += '</select>\n'
+    # content += '<input type="text" name="username" value=' + username + '>'
     content += '''
           <!-- <br><br> -->
           <input type="password" name="password">
@@ -654,6 +715,9 @@ def login():
     if app_var['msg'] != '':
         content += "<br><div name=msg>Message: [" + str(app_var['msg']) + "]</div>"
     content += "</center>\n"
+    # if argv[1] == '-p':
+    #     local_content(content)
+    session.save()
     title = app_title
     html = WrapHtml(content=content, title=title, org="companionway", center="Enjoy!")
     return html.render()
@@ -677,6 +741,7 @@ def do_login():
         session['username'] = username
         session['viewname'] = viewname
         dbug("session username has been set to : " + session['username'] + " and session viewname has been set to: " + session['viewname']) 
+        session.save()
         # content += "<p>Your login [" + username + "] for viewname [" + viewname + "] was correct.</p>"
         # content += '<a href="/db/rows/' + viewname + '">View rows for viewname: ' + viewname + '</a>'
         redirect('/db/rows/' + viewname)
@@ -881,18 +946,18 @@ def db_rows(viewname):
     # start content - add heading
     content = "<center>\n"
     content += '<div style="float: left;">User: ' + username + '</div>'
-    content += '<div style="float: right;"> Viewname: ' + viewname + ' tablename: ' + table.name + '</div><br>\n'
+    content += '<div style="float: right;"> Viewname: ' + viewname + ' Tablename: ' + table.name + '</div><br>\n'
     content += '<br>'
     content += '<div style="float: left;"><button><a href="/db/add/record">Add a new record</a></button><br></div>'
     # ### build the SQL query ### #
     content += '<div style="float: right;">'
-    dbug("filterby: " + filterby + " orderby: " + orderby)
+    # dbug("filterby: " + filterby + " orderby: " + orderby)
     sql = "SELECT * FROM " + table.name
     if filterby != "":
         sql = sql + filterby
     if orderby != "":
         sql = sql + orderby
-    dbug("sql: [" + sql + "] fltr_col: " + fltr_col + " filterby: " + filterby)
+    # dbug("sql: [" + sql + "] fltr_col: " + fltr_col + " filterby: " + filterby)
     # ### start the form for filterby ### #
     content += '<form name="filterby" action="/db/rows/' + viewname + '" method="POST">'
     content += 'Quick Filter: '
@@ -1364,10 +1429,44 @@ def db_action(action, id):
     # return content 
     # #### EOB @post('/db/<action>/<id>') #### #
 
+
+# ### create_table ### #
+@route('/db/create_table/<tablename>')
+def create_table(tablename):
+    # ####################
+    '''
+    docstring
+    '''
+    flds_d = {}
+
+    content = "<center>"
+    form_data = form_d(request)
+    if not form_data.has_key('add_fld'):
+        content += '<form name="create_table" action="/db/create_table/' + tablename +'">\n'
+        content += '<br>Tablename: <input name=tablename val=' + tablename + '">\n'
+        content += "<br><br><table border=1><tr>\n"
+        content += "<td>id</td><td>INTEGER PRIMARY_KEY</td></tr>\n"
+        for fld in flds_d:
+            content += '<tr><td><input type="text" name="add_fld" val="' + fld['name'] + '"></td>\n'
+            content += '<td><input type="text" name="' + fld_val + '" value="' + fld['val'] + '"></td></tr>\n'
+        content += '<tr><td><input type="text" name="add_fld value=" value=""></td><td><input name="add_fld_val"></td></tr>\n'
+        content += '</table>\n'
+        content += '<br><br><input type="submit" value="Submit">\n'
+        content += '</form>\n'
+    if form_data.has_key('add_fld'):
+        flds_d.append(form_d['add_fld'])
+        content += "flds_d: " + str(flds_d)
+    content += "</center>"
+    html = WrapHtml(content)
+    return html.render()
+
+
+# ##### tst only ##### #
 # @route('/tst/<item:re:(edit|detail)>')
 @route('/tst')
 # def tst(item):
 def tst():
+    # ########
     """
     for testing only
     """
@@ -1552,15 +1651,28 @@ def tst():
     content += '</table></center>'
     content += "<br>it certainly is not pretty, but it works"
     content += "<br>========== EOB form_data ================="
-
+    content += "<br>================== =================="
+    # content += "<br>BaseRequest.header: " + str(BaseRequest.headers)
+    #if sys.argv[1] == "-p":
+    #    WSGIHeaderDict = "WSGIHeaderDic"
+    content += "<br>WSGIHeaderDict: " + str(WSGIHeaderDict)
     
+    # if sys.argv[1] == "-p":
+    #     local_content(content)
+    # else:
+    #    return content
     return content
-
-
+    # ### EOB route('/tst') ### #
 
 # ##### EOB routes ####### #
 
 
 # ##### Main Code ####### #
 if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        print("len(argv): " + str(len(sys.argv)))
+        if sys.argv[1] == "-l":
+            webbrowser.open_new("http://127.0.0.1:8080/")
+    else:
+        print('NOTE: If argument 1 == "-l" a local browser will be opened for you.')
     run(app, debug=True)
